@@ -1,0 +1,311 @@
+---
+title: "COVID"
+author: "McNealy, Samantha"
+date: "2023-12-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# COVID-19 data
+
+
+## Packages
+I will include all packages used here in this section:
+
+``` {r packages, message=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+## Import Data
+
+I will start by importing my data set. 
+
+```{r import_data, message=FALSE}
+
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv", "time_series_covid19_confirmed_US.csv", "time_series_covid19_deaths_US.csv")
+
+urls <- str_c(url_in,file_names)
+
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+```
+
+Lets read in the data and see what we have.
+
+```{r rename data}
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+```
+
+## Tidy the data
+
+First lets view and tidy the global data sets. We will begin with global cases. 
+
+```{r tidy global_cases}
+global_cases <- global_cases %>%
+      pivot_longer(cols = -c('Province/State',
+                   'Country/Region', Lat, Long), 
+names_to = "date", 
+values_to = "cases") %>%
+  select(-c(Lat,Long))
+```
+
+For the global cases we changed the structure of the data so that the dates are in one column. We also renamed two columns. Then we deleted the Lat and Long column. 
+
+Next we will view and tidy the global deaths data set. 
+
+```{r tidy global_deaths}
+global_deaths<- global_deaths %>%
+      pivot_longer(cols = -c('Province/State',
+                   'Country/Region', Lat, Long), 
+names_to = "date", 
+values_to = "deaths") %>%
+  select(-c(Lat,Long))
+```
+
+We made some similar changes to the global deaths data set. We changed the structure of the data so that the dates are in one column. We also renamed two columns. Then we deleted the Lat and Long column.
+
+Finally we will combine the global cases and global deaths data sets into one data set that will be named **global**. 
+
+``` {r joining global cases and deaths}
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region', 
+         Province_State = 'Province/State') %>%
+  mutate(date = mdy(date))
+
+summary(global)
+```
+
+Using the summary() function we have decided to filter out cases that have no rows at all. We will filter out these and keep only positive cases. 
+
+```{r filter global case}
+global <- global %>% filter(cases > 0)
+summary(global)
+```
+
+Now we are going to look at some cases where they are bigger than 28,000,000 to make sure the data is valid.
+
+``` {r check data validity}
+global %>% filter(cases > 28000000)
+```
+
+The data looks valid so we will keep it. 
+
+After tidying the global data we will now move onto tidying the US data. 
+
+```{r US_cases}
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+names_to = "date",
+values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = myd(date)) %>%
+  select(-c(Lat, Long_))
+```
+
+Next we will look at US_deaths and tidy that data. 
+
+```{r US_deaths}
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+names_to = "date",
+values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = myd(date)) %>%
+  select(-c(Lat, Long_))
+```
+
+Upon viewing US deaths it looks similar to US cases. We will now join US cases and US deaths to make one data set. We will name this new data set **US**. 
+
+``` {r joining US cases and deaths}
+US <- US_cases %>%
+  full_join(US_deaths)
+
+head(US)
+```
+
+When looking at this data I noticed that there were dates as low as 2006 that continue until 2030. I have decided to remove these date and only include dates from January 1st 2020 until March 10th 2023. This will make our US dates consistent with the global dates. 
+
+```{r remove dates}
+US <- US %>%
+filter(date >= as.Date("2020-01-01") & date <= as.Date("2023-03-10"))
+```
+
+Now all dates are more consistent and will be viewed more easily on a graph. 
+
+```{r unite}
+global <- global %>%
+  unite("Combined_Key", 
+        c(Province_State, Country_Region), 
+        sep = ", ", 
+        na.rm = TRUE, 
+        remove = FALSE)
+
+head(global)
+```
+
+```{r uid data}
+uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+
+head(uid)
+```
+
+```{r join columns}
+global <- global %>% 
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, date,
+         cases, deaths, Population,
+         Combined_Key)
+global
+```
+
+Now all data is consistent and can be used more easily. 
+
+## Add Visualizations and Analysis
+
+First we want to view the data within the US and by each individual state. To do this we will group the data set by the state, region, and the date. Then we will calculate the sum of the cases, deaths, and Population by state. Next we will mutate or add a column to calculate the deaths per million and select the features we want to look at. 
+
+``` {r US by state}
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+  
+US_by_state
+```
+
+Next we will get the total number of cases, deaths and sum of the population for each for each date in the US. 
+
+``` {r US totals}
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill,  Population) %>%
+  ungroup()
+
+US_totals
+```
+
+In order to visualize the data we will filter the cases and include only if there was a case. x will be the date and y will be the cases. We will add the number of death to the graph. 
+
+``` {r US total cases and deaths}
+US_totals %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() +
+  theme(legend.position="bottom",
+           axis.text.x = element_text(angle = 90)) +
+    labs(title = "COVID19 in the US", y= NULL)
+```
+
+Now we have the total number of cases and the total number of deaths in the US
+
+```{r by state}
+state <- "New York"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases))+
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes (y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() +
+  theme(legend.position="bottom", 
+        axis.text.x = element_text(angle = 90)) +
+    labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+Next I will view the US_total maximum date and the US total maximum deaths. 
+
+```{r max date and deaths}
+max(US_totals$date)
+max(US_totals$deaths)
+```
+
+## Linear Model
+
+Lets first create a new data frame. We will call this US state totals. It will include deaths per thousand and cases per thousand. 
+
+``` {r US state totals}
+US_state_totals <- US %>%
+  group_by(Province_State) %>%
+  summarise(Total_Cases = sum(cases),
+            Total_Deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(cases_per_thou = (Total_Cases / Population) * 1000,
+         deaths_per_thou = (Total_Deaths / Population) * 1000)
+
+head(US_state_totals)
+```
+
+We will now clean the data in order to use in a liner model. First we will get rid of any NA values then we will get rid of infinite values, as we will not be able to run a linear model with them. We can confirm this change with summary() function. 
+
+```{r clean data}
+US_state_totals <- na.omit(US_state_totals)
+
+US_state_totals <- US_state_totals[!is.infinite(US_state_totals$cases_per_thou),]
+
+US_state_totals <- US_state_totals[!is.infinite(US_state_totals$deaths_per_thou),]
+
+summary(US_state_totals$cases_per_thou)
+summary(US_state_totals$deaths_per_thou)
+```
+
+Now that the data is ready to go we can create a model. I have also included a summary of the model. 
+
+```{r }
+mod <-lm(deaths_per_thou ~ cases_per_thou, data = US_state_totals)
+
+summary(mod)
+```
+
+Interpret the results: 
+  * **cases-per_thousand**: The p-value is considered significantly significant, this implies that there is a significant relationship between the number of cases and the number of deaths. 
+  * **F-statistic and P-value**: The F-statistic and the p-value test the overall significance of the regression model. The p-value being very small indicates that the model is statistically significant. 
+
+Now lets look at how many cases per thousand are the smallest and the largest
+
+```{r cases max and min}
+US_state_totals %>% slice_max(cases_per_thou)
+US_state_totals %>% slice_min(cases_per_thou)
+```
+ 
+ Now lets add in some predictions using our model and make a new data set with the predictions.
+ 
+```{r prediction}
+US_state_totals %>% mutate(pred = predict(mod))
+
+US_tot_w_pred <- US_state_totals %>% mutate(pred = predict(mod))
+US_tot_w_pred
+```
+
+Now that we've added in our predictions lets plot this.
+
+```{r graph}
+US_tot_w_pred %>% ggplot() +
+  geom_point(aes(x = cases_per_thou, y = deaths_per_thou), color = "blue") +
+  geom_point(aes(x = cases_per_thou, y = pred), color = "red")
+```
+
+The results will show what the model predicts in red compared to actual in blue. 
+
+## Bias Identification
+
+Replication Bias - I replicated this project while following along with the class. I did make slight modifications and my results are different because the time frame is also different. 
